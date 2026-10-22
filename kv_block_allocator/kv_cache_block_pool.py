@@ -16,6 +16,8 @@ class KVCacheBlockPool:
 
     def allocate(self, seq_id, num_tokens) -> bool:
         f"""Allocate kv cache block for a new sequence with {num_tokens} tokens, remember that if allocation fails, don;t change any states of kv table"""
+        if num_tokens <= 0:
+            raise ValueError(f"Sequence {seq_id} has invalid token number: {num_tokens}")
         if seq_id in self.seq_token_table:
             print(f"Sequence {seq_id} have already allocated kv cache, should not allocate again")
             return False
@@ -28,13 +30,44 @@ class KVCacheBlockPool:
         for i in range(self.num_blocks):
             if i not in self.block_alloc_table:
                 malloc_block.append(i)
-            if len(malloc_block) * self.block_size >= num_tokens:
+            if len(malloc_block) >= require_block_size:
                 self.block_alloc_table.extend(malloc_block)
                 self.seq_block_table[seq_id] = malloc_block
                 self.available_block_num -= len(malloc_block)
                 self.seq_token_table[seq_id] = num_tokens
                 break
 
+        return True
+
+    def append(self, seq_id, num_tokens) -> bool:
+        f"""Allocate kv cache block for an existed sequence with {num_tokens} tokens"""
+        if num_tokens <= 0:
+            raise ValueError(f"Sequence {seq_id} has invalid token number: {num_tokens}")
+        if seq_id not in self.seq_token_table:
+            print(f"Sequence {seq_id} is not existed in kv cache")
+            return False
+        require_block_size = num_tokens // self.block_size
+        left_required_slot = num_tokens % self.block_size
+        left_available_slot = (self.block_size -  self.seq_token_table[seq_id] % self.block_size) % self.block_size
+        if left_required_slot > left_available_slot:
+            require_block_size += 1
+        if require_block_size > self.available_block_num:
+            print(f"Left kv cache block can't satisfy required {require_block_size} kv cache block")
+            return False
+        if require_block_size == 0:
+            # The last block can satisfy required tokens
+            self.seq_token_table[seq_id] += num_tokens
+            return True
+        malloc_block = []
+        for i in range(self.num_blocks):
+            if i not in self.block_alloc_table:
+                malloc_block.append(i)
+            if len(malloc_block) >= require_block_size:
+                self.block_alloc_table.extend(malloc_block)
+                self.seq_block_table[seq_id].extend(malloc_block)
+                self.available_block_num -= len(malloc_block)
+                self.seq_token_table[seq_id] += num_tokens
+                break
         return True
 
     def free(self, seq_id):
